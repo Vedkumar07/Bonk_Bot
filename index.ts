@@ -3,6 +3,7 @@ import {message} from 'telegraf/filters';
 import {Keypair, Connection, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction, LAMPORTS_PER_SOL, confirmTransaction} from '@solana/web3.js';
 import { neon } from '@neondatabase/serverless';
 import { decode, encode } from 'bs58';
+import { createCipher, createDecipher } from 'crypto';
 const sql = neon(process.env.POSTGRES_URL!);
 async function getPgVersion() {
   const result = await sql`SELECT version()`;
@@ -21,6 +22,22 @@ async function initDB() {
 
 getPgVersion();
 initDB();
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-key-change-in-prod';
+
+function encrypt(text: string): string {
+    const cipher = createCipher('aes-256-cbc', ENCRYPTION_KEY);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return encrypted;
+}
+
+function decrypt(encrypted: string): string {
+    const decipher = createDecipher('aes-256-cbc', ENCRYPTION_KEY);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+}
 const bot =new Telegraf("8561665479:AAEFQrgO-6y-gB5sr2IGdYLYuFLwADxu7eQ");
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const USERS:Record<string,Keypair>={};
@@ -53,6 +70,10 @@ const postWalletCreationKeyboard=Markup.inlineKeyboard([
             [
                 Markup.button.callback('Check Balance', 'check_balance'),
                 Markup.button.callback('Airdrop SOL (Devnet)', 'airdrop_sol')
+            ],
+            [
+                Markup.button.callback('📊 View Transaction History', 'view_history'),
+                Markup.button.callback('🔑 Show Private Key', 'show_private_key')
             ]
         ]);
 bot.start(async (ctx) => {
@@ -89,8 +110,9 @@ bot.action('generate_wallet',async (ctx)=>{
     const userId=ctx.from?.id;
     USERS[userId]=keypair;
     const privateKeyEncoded = encode(keypair.secretKey);
+    const encryptedPrivateKey = encrypt(privateKeyEncoded);
     try {
-        await sql`INSERT INTO wallets (user_id, public_key, private_key) VALUES (${userId}, ${keypair.publicKey.toBase58()}, ${privateKeyEncoded})`;
+        await sql`INSERT INTO wallets (user_id, public_key, private_key) VALUES (${userId}, ${keypair.publicKey.toBase58()}, ${encryptedPrivateKey})`;
         console.log(`Wallet saved to DB for user ${userId}`);
     } catch (e) {
         console.error('Failed to save wallet to DB:', e);
@@ -129,7 +151,13 @@ bot.action(/^import_(.+)$/, async (ctx) => {
         return;
     }
     try {
-        const secretKey = decode(wallet[0].private_key);
+        let secretKey: Uint8Array;
+        try {
+            secretKey = decode(wallet[0].private_key);
+        } catch {
+            const decryptedPrivateKey = decrypt(wallet[0].private_key);
+            secretKey = decode(decryptedPrivateKey);
+        }
         const keypair = Keypair.fromSecretKey(secretKey);
         USERS[userId] = keypair;
         ctx.sendMessage(`✅ Wallet imported successfully! Public key: ${keypair.publicKey.toBase58()}`,{
@@ -226,6 +254,66 @@ bot.action('check_balance',async (ctx)=>{
             ...postWalletCreationKeyboard
         });
     }
+});
+bot.action('view_history',async (ctx)=>{
+    const userId=ctx.from?.id;
+    ctx.answerCbQuery('Fetching transaction history...');
+    const keypair=USERS[userId];
+    if(!keypair){
+        ctx.sendMessage("❌ No wallet found. Please generate a wallet first.",{
+            parse_mode:'Markdown',
+            ...onlyGenerarteKeyboard
+        });
+        return;
+    }
+    try{
+        const signatures = await connection.getSignaturesForAddress(keypair.publicKey, {limit: 10});
+        if(signatures.length === 0){
+            ctx.sendMessage("📊 No transactions found for this wallet.",{
+                parse_mode:'Markdown',
+                ...postWalletCreationKeyboard
+            });
+            return;
+        }
+        let message = "📊 **Recent Transaction History:**\n\n";
+        for(const sig of signatures){
+            const tx = await connection.getTransaction(sig.signature);
+            if(tx && tx.meta){
+                const amount = Math.abs(tx.meta.preBalances[0] - tx.meta.postBalances[0]) / LAMPORTS_PER_SOL;
+                const type = tx.meta.preBalances[0] > tx.meta.postBalances[0] ? 'Sent' : 'Received';
+                message += `🔗 **${type} ${amount} SOL**\n`;
+                message += `📝 Signature: \`${sig.signature.slice(0,20)}...\`\n`;
+                message += `🕒 Block: ${sig.slot}\n\n`;
+            }
+        }
+        ctx.sendMessage(message,{
+            parse_mode:'Markdown',
+            ...postWalletCreationKeyboard
+        });
+    }catch(e){
+        console.error(e);
+        ctx.sendMessage("❌ Failed to fetch transaction history. Please try again.",{
+            parse_mode:'Markdown',
+            ...postWalletCreationKeyboard
+        });
+    }
+});
+bot.action('show_private_key',async (ctx)=>{
+    const userId=ctx.from?.id;
+    ctx.answerCbQuery('Retrieving private key...');
+    const keypair=USERS[userId];
+    if(!keypair){
+        ctx.sendMessage("❌ No wallet found. Please generate a wallet first.",{
+            parse_mode:'Markdown',
+            ...onlyGenerarteKeyboard
+        });
+        return;
+    }
+    const privateKeyEncoded = encode(keypair.secretKey);
+    ctx.sendMessage(`⚠️ **WARNING: Never share your private key!**\n\n🔑 **Private Key:** \`${privateKeyEncoded}\`\n\nThis key gives full access to your wallet. Keep it secure and never share it with anyone.`,{
+        parse_mode:'Markdown',
+        ...postWalletCreationKeyboard
+    });
 });
 bot.on(message("text"),async (ctx)=>{
     const userId=ctx.from?.id;
