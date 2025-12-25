@@ -2,7 +2,6 @@
 
 <div align="center">
 
-
 [Try it now](https://t.me/usersolbonk_bot) 
 
 </div>
@@ -32,7 +31,7 @@
 
 **Bonk Bot** is a Telegram bot that provides a simple and secure way to manage Solana wallets directly from your Telegram app. No need for complex wallet apps or browser extensions - everything you need is just a message away!
 
-**Try it now:** [@usersolbonk_bot](https://t.me/usersolbonk_bot)
+**Try it now:** [@bonkbot_sol](https://t.me/usersolbonk_bot)
 
 ### Why Bonk Bot?
 
@@ -103,7 +102,7 @@ Features:
 
 ### Prerequisites
 
-- Node.js 16+ and npm
+- Bun 1.0+ (recommended runtime)
 - PostgreSQL database (or Neon Database account)
 - Telegram Bot Token (from [@BotFather](https://t.me/botfather))
 - Basic knowledge of TypeScript and Telegram bots
@@ -118,7 +117,7 @@ Features:
 
 2. **Install dependencies**
    ```bash
-   npm install
+   bun install
    ```
 
 3. **Create environment file**
@@ -135,20 +134,20 @@ Features:
    SOLANA_NETWORK=confirmed
    ```
 
-5. **Build the project**
+5. **Run the bot**
    ```bash
-   npm run build
-   ```
-
-6. **Start the bot**
-   ```bash
-   npm start
+   bun run src/index.ts
    ```
 
 ### Quick Start (Development)
 
 ```bash
-npm run dev
+bun run src/index.ts
+```
+
+Or with watch mode:
+```bash
+bun --watch src/index.ts
 ```
 
 ---
@@ -286,12 +285,20 @@ For production deployment:
 
 | Technology | Purpose | Version |
 |------------|---------|---------|
-| **Node.js** | Runtime environment | 16+ |
+| **Bun** | JavaScript runtime & toolkit | 1.0+ |
 | **TypeScript** | Type-safe JavaScript | 5.0+ |
 | **Telegraf** | Telegram bot framework | 4.16+ |
 | **Solana Web3.js** | Solana blockchain SDK | 1.95+ |
 | **PostgreSQL** | Database | 14+ |
 | **Neon Database** | Serverless PostgreSQL | Latest |
+
+### Why Bun?
+
+- ⚡ **3x faster** than Node.js
+- 🚀 **Built-in TypeScript** support (no need for ts-node)
+- 📦 **Fast package manager** (replaces npm/yarn)
+- 🔧 **All-in-one toolkit** (bundler, test runner, package manager)
+- 💾 **Lower memory usage**
 
 ### Dependencies
 
@@ -356,22 +363,33 @@ bonk-bot/
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
-# Run in development mode with hot reload
-npm run dev
+# Run in development mode
+bun run src/index.ts
 
-# Build for production
-npm run build
+# Run with watch mode (auto-restart on changes)
+bun --watch src/index.ts
 
 # Run tests (when implemented)
-npm test
-
-# Lint code
-npm run lint
+bun test
 
 # Format code
-npm run format
+bun run format
+```
+
+### Package.json Scripts
+
+```json
+{
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "lint": "bunx eslint src/",
+    "format": "bunx prettier --write src/"
+  }
+}
 ```
 
 ### Environment Variables
@@ -395,6 +413,23 @@ SOLANA_NETWORK=confirmed
 # Optional
 NODE_ENV=development
 LOG_LEVEL=debug
+```
+
+### Bun-Specific Configuration
+
+Create a `bunfig.toml` for Bun configuration (optional):
+
+```toml
+[install]
+# Configure registry
+registry = "https://registry.npmjs.org"
+
+# Enable exact versions
+exact = true
+
+[install.scopes]
+# Scoped packages configuration
+"@solana" = { registry = "https://registry.npmjs.org" }
 ```
 
 ### Adding New Features
@@ -436,60 +471,79 @@ LOG_LEVEL=debug
 #### Option 1: VPS (Digital Ocean, AWS EC2, etc.)
 
 ```bash
-# 1. Clone repository on server
+# 1. Install Bun on server
+curl -fsSL https://bun.sh/install | bash
+
+# 2. Clone repository on server
 git clone https://github.com/yourusername/bonk-bot.git
 
-# 2. Install dependencies
-npm install
-
-# 3. Build
-npm run build
+# 3. Install dependencies
+bun install
 
 # 4. Use PM2 for process management
 npm install -g pm2
-pm2 start dist/index.js --name bonk-bot
+pm2 start src/index.ts --interpreter bun --name bonk-bot
 
 # 5. Setup auto-restart
 pm2 startup
 pm2 save
 ```
 
-#### Option 2: Heroku
+#### Option 2: Railway / Render
 
 ```bash
-# 1. Create Heroku app
-heroku create bonk-bot
-
-# 2. Add PostgreSQL
-heroku addons:create heroku-postgresql:hobby-dev
-
-# 3. Set environment variables
-heroku config:set BOT_TOKEN=your_token
-heroku config:set ENCRYPTION_KEY=your_key
-
-# 4. Deploy
-git push heroku main
+# 1. Create account on Railway/Render
+# 2. Connect GitHub repository
+# 3. Set environment variables in dashboard
+# 4. Set start command: bun run src/index.ts
+# 5. Deploy
 ```
 
 #### Option 3: Docker
 
 ```dockerfile
-FROM node:16-alpine
+FROM oven/bun:1
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm ci --only=production
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
 
 COPY . .
-RUN npm run build
 
-CMD ["node", "dist/index.js"]
+CMD ["bun", "run", "src/index.ts"]
 ```
 
+Build and run:
 ```bash
 docker build -t bonk-bot .
 docker run -d --env-file .env bonk-bot
+```
+
+#### Option 4: Fly.io
+
+```toml
+# fly.toml
+app = "bonk-bot"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+```
+
+Deploy:
+```bash
+fly launch
+fly secrets set BOT_TOKEN=your_token
+fly secrets set ENCRYPTION_KEY=your_key
+fly deploy
 ```
 
 ### Production Checklist
@@ -572,9 +626,8 @@ in the Software without restriction...
 ## 📞 Contact
 
 **Project Maintainer**: Your Name
-
-- Email: kmdeep567@gmail.com
-- GitHub: [Vedkumar07](https://github.com/Vedkumar07)
+- Email:kmdeep567@gmail.com
+- GitHub: [@Vedkumar07(https://github.com/Vedkumar07)
 
 **Bot**: [@bonkbot_sol](https://t.me/usersolbonk_bot)
 
@@ -594,8 +647,8 @@ in the Software without restriction...
 
 **⭐ Star this repo if you find it helpful!**
 
-Made with ❤️ by [Ved Kumar]
+Made with ❤️ by [Ved KUmar]
 
-[Try the Bot](https://t.me/usersolbonk_bot) | [Report Issues](https://github.com/yourusername/bonk-bot/issues) | [Documentation](https://github.com/yourusername/bonk-bot/wiki)
+[Try the Bot](https://t.me/usersolbonk_bot) 
 
 </div>
