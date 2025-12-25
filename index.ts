@@ -1,11 +1,31 @@
 import { Telegraf, Markup, Context } from 'telegraf';
 import {message} from 'telegraf/filters';
 import {Keypair, Connection, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction, LAMPORTS_PER_SOL, confirmTransaction} from '@solana/web3.js';
+import { neon } from '@neondatabase/serverless';
+import { decode, encode } from 'bs58';
+const sql = neon(process.env.POSTGRES_URL!);
+async function getPgVersion() {
+  const result = await sql`SELECT version()`;
+  console.log(result[0]);
+}
+
+async function initDB() {
+  await sql`CREATE TABLE IF NOT EXISTS wallets (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    public_key TEXT NOT NULL UNIQUE,
+    private_key TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+  )`;
+}
+
+getPgVersion();
+initDB();
 const bot =new Telegraf("8561665479:AAEFQrgO-6y-gB5sr2IGdYLYuFLwADxu7eQ");
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const USERS:Record<string,Keypair>={};
 interface PendingRequestType{
-    type:'SEND_SOL'|'SEND_TOKEN',
+    type:'SEND_SOL'|'SEND_TOKEN'|'IMPORT_WALLET',
     amount?:number,
     to?:string
 }
@@ -13,12 +33,16 @@ const PENDING_REQUEST:Record<string,PendingRequestType>={};
 const keyboard=Markup.inlineKeyboard([
             [
                 Markup.button.callback('🔑 Generate Wallet', 'generate_wallet'),
-                Markup.button.callback('🔑 Show Public Key', 'show_public_key'),
+                Markup.button.callback('� Import Wallet', 'import_wallet'),
+            ],
+            [
+                Markup.button.callback('�🔑 Show Public Key', 'show_public_key'),
             ],
     ]);
 const onlyGenerarteKeyboard=Markup.inlineKeyboard([
             [
-                Markup.button.callback('🔑 Generate Wallet', 'generate_wallet')
+                Markup.button.callback('🔑 Generate Wallet', 'generate_wallet'),
+                Markup.button.callback('📋 Import Wallet', 'import_wallet'),
             ],
         ]);
 const postWalletCreationKeyboard=Markup.inlineKeyboard([
@@ -59,15 +83,65 @@ bot.start(async (ctx) => {
         ...keyboard
     });
 });
-bot.action('generate_wallet',(ctx)=>{
+bot.action('generate_wallet',async (ctx)=>{
     ctx.answerCbQuery('Generating your new wallet...');
     const keypair=Keypair.generate();
     const userId=ctx.from?.id;
     USERS[userId]=keypair;
+    const privateKeyEncoded = encode(keypair.secretKey);
+    try {
+        await sql`INSERT INTO wallets (user_id, public_key, private_key) VALUES (${userId}, ${keypair.publicKey.toBase58()}, ${privateKeyEncoded})`;
+        console.log(`Wallet saved to DB for user ${userId}`);
+    } catch (e) {
+        console.error('Failed to save wallet to DB:', e);
+    }
     ctx.sendMessage(`✅ Wallet Created for you with public key ${keypair.publicKey.toBase58()}`,{
         parse_mode:'Markdown',
         ...postWalletCreationKeyboard
     });
+})
+bot.action('import_wallet',async (ctx)=>{
+    const userId=ctx.from?.id;
+    ctx.answerCbQuery('Loading your wallets...');
+    const wallets = await sql`SELECT public_key FROM wallets WHERE user_id = ${userId}`;
+    if(wallets.length === 0){
+        ctx.sendMessage("❌ No previous wallets found. Please generate a new wallet first.",{
+            parse_mode:'Markdown',
+            ...onlyGenerarteKeyboard
+        });
+        return;
+    }
+    const importKeyboard = Markup.inlineKeyboard(
+        wallets.map(w => [Markup.button.callback(`Import ${w.public_key.slice(0, 10)}...`, `import_${w.public_key}`)])
+    );
+    ctx.sendMessage("Select a wallet to import:", importKeyboard);
+})
+bot.action(/^import_(.+)$/, async (ctx) => {
+    const publicKeyStr = ctx.match[1];
+    const userId = ctx.from?.id;
+    ctx.answerCbQuery('Importing wallet...');
+    const wallet = await sql`SELECT private_key FROM wallets WHERE user_id = ${userId} AND public_key = ${publicKeyStr}`;
+    if(wallet.length === 0){
+        ctx.sendMessage("❌ Wallet not found.",{
+            parse_mode:'Markdown',
+            ...onlyGenerarteKeyboard
+        });
+        return;
+    }
+    try {
+        const secretKey = decode(wallet[0].private_key);
+        const keypair = Keypair.fromSecretKey(secretKey);
+        USERS[userId] = keypair;
+        ctx.sendMessage(`✅ Wallet imported successfully! Public key: ${keypair.publicKey.toBase58()}`,{
+            parse_mode:'Markdown',
+            ...postWalletCreationKeyboard
+        });
+    } catch(e) {
+        ctx.sendMessage("❌ Failed to import wallet.",{
+            parse_mode:'Markdown',
+            ...onlyGenerarteKeyboard
+        });
+    }
 })
 bot.action('show_public_key',(ctx)=>{
     ctx.answerCbQuery("Getting your public key...");
